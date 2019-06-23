@@ -1,61 +1,24 @@
-import base64
-import time
-import hashlib
-import hmac
-import urllib
-import urllib2
-from xml.etree import ElementTree
-
+from datetime import datetime
 import logging
 
+import boto3
+from botocore.exceptions import ClientError
+
 logger = logging.getLogger("turkic.api")
+CommunicationError = ClientError
 
 
 class Server(object):
     def __init__(self, signature, accesskey, localhost, sandbox=False):
-        self.signature = signature
-        self.accesskey = accesskey
         self.localhost = localhost
-        self.sandbox = sandbox
 
         if sandbox:
-            self.server = "mechanicalturk.sandbox.amazonaws.com"
+            url = "https://mturk-requester-sandbox.us-east-1.amazonaws.com"
         else:
-            self.server = "mechanicalturk.amazonaws.com"
+            url = "https://mturk-requester.us-east-1.amazonaws.com"
 
-    def request(self, operation, parameters={}):
-        """
-        Sends the request to the Turk server and returns a response object.
-        """
-
-        if not self.signature or not self.accesskey:
-            raise RuntimeError("Signature or access key missing")
-
-        timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        hmacstr = hmac.new(
-            config.signature,
-            "AWSMechanicalTurkRequester" + operation + timestamp, hashlib.sha1)
-        hmacstr = base64.encodestring(hmacstr.digest()).strip()
-
-        logger.info("Request to MTurk: {0}".format(operation))
-        for paramk, paramv in parameters.items():
-            logger.debug("  {0}: {1}".format(paramk, paramv))
-
-        baseurl = "/?" + urllib.urlencode({
-                    "Service": "AWSMechanicalTurkRequester",
-                    "AWSAccessKeyId": config.accesskey,
-                    "Version": "2008-08-02",
-                    "Operation": operation,
-                    "Signature": hmacstr,
-                    "Timestamp": timestamp})
-        url = baseurl + "&" + urllib.urlencode(parameters)
-        url = "https://" + self.server + url
-
-        req = urllib2.Request(url=url)
-        data = urllib2.urlopen(req)
-
-        response = Response(operation, data)
-        return response
+        self.client = boto3.client('mturk', endpoint_url=url, region_name='us-east-1',
+                                   aws_access_key_id=accesskey, aws_secret_access_key=signature)
 
     def createhit(self, title, description, page, amount, duration,
                   lifetime, keywords="", autoapprove=604800, height=650,
@@ -74,34 +37,33 @@ class Server(object):
         r = {"Title": title,
              "Description": description,
              "Keywords": keywords,
-             "Reward.1.Amount": amount,
-             "Reward.1.CurrencyCode": "USD",
+             "Reward": '%0.2f' % amount,
              "AssignmentDurationInSeconds": duration,
              "AutoApprovalDelayInSeconds": autoapprove,
              "LifetimeInSeconds": lifetime}
 
-        qualcounter = 0
+        qualifications = []
 
         if minapprovedpercent:
-            qualcounter += 1
-            base = "QualificationRequirement.{0}." .format(qualcounter)
-            r[base + "QualificationTypeId"] = "000000000000000000L0"
-            r[base + "Comparator"] = "GreaterThanOrEqualTo"
-            r[base + "IntegerValue"] = minapprovedpercent
+            qualifications.append({
+                "QualificationTypeId": "000000000000000000L0",
+                "Comparator": "GreaterThanOrEqualTo",
+                "IntegerValue": minapprovedpercent
+            })
 
         if minapprovedamount:
-            qualcounter += 1
-            base = "QualificationRequirement.{0}." .format(qualcounter)
-            r[base + "QualificationTypeId"] = "00000000000000000040"
-            r[base + "Comparator"] = "GreaterThanOrEqualTo"
-            r[base + "IntegerValue"] = minapprovedamount
+            qualifications.append({
+                "QualificationTypeId": "00000000000000000040",
+                "Comparator": "GreaterThanOrEqualTo",
+                "IntegerValue": minapprovedamount
+            })
 
         if countrycode:
-            qualcounter += 1
-            base = "QualificationRequirement.{0}." .format(qualcounter)
-            r[base + "QualificationTypeId"] = "00000000000000000071"
-            r[base + "Comparator"] = "EqualTo"
-            r[base + "LocaleValue.Country"] = countrycode
+            qualifications.append({
+                "QualificationTypeId": "00000000000000000071",
+                "Comparator": "EqualTo",
+                "IntegerValue": countrycode
+            })
 
         r["Question"] = ("<ExternalQuestion xmlns=\"http://mechanicalturk"
                          ".amazonaws.com/AWSMechanicalTurkDataSchemas/"
@@ -111,121 +73,84 @@ class Server(object):
                          "</ExternalQuestion>").format(self.localhost,
                                                        page, height)
 
-        r = self.request("CreateHIT", r)
-        r.validate("HIT/Request/IsValid", "HIT/Request/Errors/Error/Message")
-        r.store("HIT/HITId", "hitid")
-        r.store("HIT/HITTypeId", "hittypeid")
+        r = self.client.create_hit(**r)
         return r
 
     def disable(self, hitid):
         """
         Disables the HIT from the MTurk service.
         """
-        r = self.request("DisableHIT", {"HITId": hitid})
-        r.validate("DisableHITResult/Request/IsValid",
-                   "DisableHITResult/Request/Errors/Error/Message")
-        return r
+        return self.client.update_expiration_for_hit(
+            HITId=hitid, ExpireAt=datetime.utcnow())
 
     def purge(self):
         """
         Disables all the HITs on the MTurk server. Useful for debugging.
         """
-        while True:
-            r = self.request("SearchHITs", {"SortProperty": "CreationTime",
-                                            "SortDirection": "Descending",
-                                            "PageSize": "100",
-                                            "PageNumber": "1"})
-            r.validate("SearchHITsResult/Request/IsValid")
-            r.store("SearchHITsResult/TotalNumResults", "num", int)
-            if r.num == 0:
-                return
-            for hit in r.tree.findall("SearchHITsResult/HIT"):
-                hitid = hit.find("HITId").text.strip()
-                try:
-                    self.disable(hitid)
-                except CommunicationError:
-                    pass
-            print("Next page")
+        raise Exception("You probably don't want to do this")
 
     def accept(self, assignmentid, feedback=""):
         """
         Accepts the assignment and pays the worker.
         """
-        r = self.request("ApproveAssignment",
-                         {"AssignmentId": assignmentid,
-                          "RequesterFeedback": feedback})
-        r.validate("ApproveAssignmentResult/Request/IsValid",
-                   "ApproveAssignmentResult/Request/Errors/Error/Message")
-        return r
+        return self.client.approve_assignment(
+            AssignmentId=assignmentid,
+            RequesterFeedback=feedback
+        )
 
     def reject(self, assignmentid, feedback=""):
         """
         Rejects the assignment and does not pay the worker.
         """
-        r = self.request("RejectAssignment",
-                         {"AssignmentId": assignmentid,
-                          "RequesterFeedback": feedback})
-        r.validate("RejectAssignmentResult/Request/IsValid",
-                   "RejectAssignmentResult/Request/Errors/Error/Message")
-        return r
+        return self.client.reject_assignment(
+            AssignmentId=assignmentid,
+            RequesterFeedback=feedback
+        )
 
     def bonus(self, workerid, assignmentid, amount, feedback=""):
         """
         Grants a bonus to a worker for an assignment.
         """
-        r = self.request(
-            "GrantBonus",
-            {"WorkerId": workerid,
-             "AssignmentId": assignmentid,
-             "BonusAmount.1.Amount": amount,
-             "BonusAmount.1.CurrencyCode": "USD",
-             "Reason": feedback})
-        r.validate("GrantBonusResult/Request/IsValid",
-                   "GrantBonusResult/Request/Errors/Error/Message")
-        return r
+        return self.client.reject_assignment(
+            WorkerId=workerid,
+            AssignmentId=assignmentid,
+            BonusAmount='%0.2f' % amount,
+            Reason=feedback
+        )
 
     def block(self, workerid, reason=""):
         """
         Blocks the worker from working on any of our HITs.
         """
-        r = self.request("BlockWorker", {"WorkerId": workerid,
-                                         "Reason": reason})
-        r.validate("BlockWorkerResult/Request/IsValid",
-                   "BlockWorkerResult/Request/Errors/Error/Message")
-        return r
+        return self.client.create_worker_block(
+            WorkerId=workerid,
+            Reason=reason
+        )
 
     def unblock(self, workerid, reason=""):
         """
         Unblocks the worker and allows him to work for us again.
         """
-        r = self.request("UnblockWorker", {"WorkerId": workerid,
-                                           "Reason": reason})
-        r.validate("UnblockWorkerResult/Request/IsValid",
-                   "UnblockWorkerResult/Request/Errors/Error/Message")
-        return r
+        return self.client.delete_worker_block(
+            WorkerId=workerid,
+            Reason=reason
+        )
 
     def email(self, workerid, subject, message):
         """
         Sends an email to the worker.
         """
-        r = self.request("NotifyWorkers", {"Subject": subject,
-                                           "MessageText": message,
-                                           "WorkerId.1": workerid})
-        r.validate("NotifyWorkersResult/Request/IsValid",
-                   "NotifyWorkersResult/Request/Errors/Error/Message")
-        return r
+        return self.client.notify_workers(
+            WorkerIds=[workerid],
+            Subject=subject,
+            MessageText=message
+        )
 
     def getstatistic(self, statistic, type, timeperiod="LifeToDate"):
         """
         Returns the total reward payout.
         """
-        r = self.request("GetRequesterStatistic", {"Statistic": statistic,
-                                                   "TimePeriod": timeperiod})
-        r.validate("GetStatisticResult/Request/IsValid")
-        xmlvalue = "LongValue" if type is int else "DoubleValue"
-        r.store("GetStatisticResult/DataPoint/{0}".format(xmlvalue),
-                "value", type)
-        return r.value
+        raise Exception("Not supported by new mturk api")
 
     @property
     def balance(self):
@@ -233,13 +158,7 @@ class Server(object):
         Returns a response object with the available balance in the amount
         attribute.
         """
-        r = self.request("GetAccountBalance")
-        r.validate("GetAccountBalanceResult/Request/IsValid")
-        r.store("GetAccountBalanceResult/AvailableBalance/Amount",
-                "amount", float)
-        r.store("GetAccountBalanceResult/AvailableBalance/CurrencyCode",
-                "currency")
-        return r.amount
+        return float(self.client.get_account_balance()["AvailableBalance"])
 
     @property
     def rewardpayout(self):
@@ -272,70 +191,6 @@ class Server(object):
         Returns the total number of HITs created.
         """
         return self.getstatistic("NumberHITsCreated", int)
-
-
-class Response(object):
-    """
-    A generic response from the MTurk server.
-    """
-    def __init__(self, operation, httpresponse):
-        self.operation = operation
-        self.httpresponse = httpresponse
-        self.data = httpresponse.read()
-        self.tree = ElementTree.fromstring(self.data)
-        self.values = {}
-
-    def validate(self, valid, errormessage=None):
-        """
-        Validates the response and raises an exception if invalid.
-
-        Valid contains a path that must contain False if the response
-        is invalid.
-
-        If errormessage is not None, use this field as the error description.
-        """
-        valide = self.tree.find(valid)
-        if valide is None:
-            raise CommunicationError("XML malformed", self)
-        elif valide.text.strip() == "False":
-            if errormessage:
-                errormessage = self.tree.find(errormessage)
-                if errormessage is None:
-                    raise CommunicationError("Response not valid "
-                                             "and XML malformed", self)
-                raise CommunicationError(errormessage.text.strip(), self)
-            else:
-                raise CommunicationError("Response not valid", self)
-
-    def store(self, path, name, type=str):
-        """
-        Stores the text at path into the attribute name.
-        """
-        node = self.tree.find(path)
-        if node is None:
-            raise CommunicationError("XML malformed "
-                                     "(cannot find {0})".format(path), self)
-        self.values[name] = type(node.text.strip())
-
-    def __getattr__(self, name):
-        """
-        Used to lookup attributes.
-        """
-        if name not in self.values:
-            raise AttributeError("{0} is not stored".format(name))
-        return self.values[name]
-
-
-class CommunicationError(Exception):
-    """
-    The error raised due to a communication failure with MTurk.
-    """
-    def __init__(self, error, response):
-        self.error = error
-        self.response = response
-
-    def __str__(self):
-        return self.error
 
 
 try:

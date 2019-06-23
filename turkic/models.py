@@ -129,7 +129,7 @@ class HIT(database.Base):
             minapprovedpercent = self.group.minapprovedpercent,
             countrycode = self.group.countrycode,
             page = self.getpage())
-        self.hitid = resp.hitid
+        self.hitid = resp['HIT']['HITId']
         self.published = True
         logger.debug("Published HIT {0}".format(self.hitid))
 

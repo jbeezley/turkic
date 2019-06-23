@@ -24,5 +24,5 @@ setup(
     scripts = ['scripts/turkic'],
     package_dir = {"turkic": "turkic"},
     package_data = {"": datafiles},
-    install_requires = ["setuptools", "SQLAlchemy", "wsgilog"]
+    install_requires = ["setuptools", "SQLAlchemy", "wsgilog", "boto3"]
 )
