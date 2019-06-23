@@ -4,15 +4,15 @@ import hashlib
 import hmac
 import urllib
 import urllib2
-from math import ceil
 from xml.etree import ElementTree
 
 import logging
 
 logger = logging.getLogger("turkic.api")
 
+
 class Server(object):
-    def __init__(self, signature, accesskey, localhost, sandbox = False):
+    def __init__(self, signature, accesskey, localhost, sandbox=False):
         self.signature = signature
         self.accesskey = accesskey
         self.localhost = localhost
@@ -23,7 +23,7 @@ class Server(object):
         else:
             self.server = "mechanicalturk.amazonaws.com"
 
-    def request(self, operation, parameters = {}):
+    def request(self, operation, parameters={}):
         """
         Sends the request to the Turk server and returns a response object.
         """
@@ -32,7 +32,8 @@ class Server(object):
             raise RuntimeError("Signature or access key missing")
 
         timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        hmacstr = hmac.new(config.signature,
+        hmacstr = hmac.new(
+            config.signature,
             "AWSMechanicalTurkRequester" + operation + timestamp, hashlib.sha1)
         hmacstr = base64.encodestring(hmacstr.digest()).strip()
 
@@ -50,18 +51,19 @@ class Server(object):
         url = baseurl + "&" + urllib.urlencode(parameters)
         url = "https://" + self.server + url
 
-        req = urllib2.Request(url = url)
+        req = urllib2.Request(url=url)
         data = urllib2.urlopen(req)
-        
+
         response = Response(operation, data)
         return response
 
     def createhit(self, title, description, page, amount, duration,
-        lifetime, keywords = "", autoapprove = 604800, height = 650,
-        minapprovedpercent = None, minapprovedamount = None, countrycode = None):
+                  lifetime, keywords="", autoapprove=604800, height=650,
+                  minapprovedpercent=None, minapprovedamount=None,
+                  countrycode=None):
         """
         Creates a HIT on Mechanical Turk.
-        
+
         If successful, returns a Response object that has fields:
             hit_id          The HIT ID
             hit_type_id     The HIT group ID
@@ -70,13 +72,13 @@ class Server(object):
         describing the failure.
         """
         r = {"Title": title,
-            "Description": description,
-            "Keywords": keywords,
-            "Reward.1.Amount": amount,
-            "Reward.1.CurrencyCode": "USD",
-            "AssignmentDurationInSeconds": duration,
-            "AutoApprovalDelayInSeconds": autoapprove,
-            "LifetimeInSeconds": lifetime}
+             "Description": description,
+             "Keywords": keywords,
+             "Reward.1.Amount": amount,
+             "Reward.1.CurrencyCode": "USD",
+             "AssignmentDurationInSeconds": duration,
+             "AutoApprovalDelayInSeconds": autoapprove,
+             "LifetimeInSeconds": lifetime}
 
         qualcounter = 0
 
@@ -85,21 +87,21 @@ class Server(object):
             base = "QualificationRequirement.{0}." .format(qualcounter)
             r[base + "QualificationTypeId"] = "000000000000000000L0"
             r[base + "Comparator"] = "GreaterThanOrEqualTo"
-            r[base + "IntegerValue"] = minapprovedpercent 
+            r[base + "IntegerValue"] = minapprovedpercent
 
         if minapprovedamount:
             qualcounter += 1
             base = "QualificationRequirement.{0}." .format(qualcounter)
             r[base + "QualificationTypeId"] = "00000000000000000040"
             r[base + "Comparator"] = "GreaterThanOrEqualTo"
-            r[base + "IntegerValue"] = minapprovedamount 
+            r[base + "IntegerValue"] = minapprovedamount
 
         if countrycode:
             qualcounter += 1
             base = "QualificationRequirement.{0}." .format(qualcounter)
             r[base + "QualificationTypeId"] = "00000000000000000071"
             r[base + "Comparator"] = "EqualTo"
-            r[base + "LocaleValue.Country"] = countrycode 
+            r[base + "LocaleValue.Country"] = countrycode
 
         r["Question"] = ("<ExternalQuestion xmlns=\"http://mechanicalturk"
                          ".amazonaws.com/AWSMechanicalTurkDataSchemas/"
@@ -109,12 +111,12 @@ class Server(object):
                          "</ExternalQuestion>").format(self.localhost,
                                                        page, height)
 
-        r = self.request("CreateHIT", r);
+        r = self.request("CreateHIT", r)
         r.validate("HIT/Request/IsValid", "HIT/Request/Errors/Error/Message")
         r.store("HIT/HITId", "hitid")
         r.store("HIT/HITTypeId", "hittypeid")
         return r
-    
+
     def disable(self, hitid):
         """
         Disables the HIT from the MTurk service.
@@ -143,9 +145,9 @@ class Server(object):
                     self.disable(hitid)
                 except CommunicationError:
                     pass
-            print "Next page"
+            print("Next page")
 
-    def accept(self, assignmentid, feedback = ""):
+    def accept(self, assignmentid, feedback=""):
         """
         Accepts the assignment and pays the worker.
         """
@@ -156,7 +158,7 @@ class Server(object):
                    "ApproveAssignmentResult/Request/Errors/Error/Message")
         return r
 
-    def reject(self, assignmentid, feedback = ""):
+    def reject(self, assignmentid, feedback=""):
         """
         Rejects the assignment and does not pay the worker.
         """
@@ -167,21 +169,22 @@ class Server(object):
                    "RejectAssignmentResult/Request/Errors/Error/Message")
         return r
 
-    def bonus(self, workerid, assignmentid, amount, feedback = ""):
+    def bonus(self, workerid, assignmentid, amount, feedback=""):
         """
         Grants a bonus to a worker for an assignment.
         """
-        r = self.request("GrantBonus",
+        r = self.request(
+            "GrantBonus",
             {"WorkerId": workerid,
              "AssignmentId": assignmentid,
              "BonusAmount.1.Amount": amount,
              "BonusAmount.1.CurrencyCode": "USD",
-             "Reason": feedback});
+             "Reason": feedback})
         r.validate("GrantBonusResult/Request/IsValid",
                    "GrantBonusResult/Request/Errors/Error/Message")
         return r
 
-    def block(self, workerid, reason = ""):
+    def block(self, workerid, reason=""):
         """
         Blocks the worker from working on any of our HITs.
         """
@@ -191,7 +194,7 @@ class Server(object):
                    "BlockWorkerResult/Request/Errors/Error/Message")
         return r
 
-    def unblock(self, workerid, reason = ""):
+    def unblock(self, workerid, reason=""):
         """
         Unblocks the worker and allows him to work for us again.
         """
@@ -212,7 +215,7 @@ class Server(object):
                    "NotifyWorkersResult/Request/Errors/Error/Message")
         return r
 
-    def getstatistic(self, statistic, type, timeperiod = "LifeToDate"):
+    def getstatistic(self, statistic, type, timeperiod="LifeToDate"):
         """
         Returns the total reward payout.
         """
@@ -270,6 +273,7 @@ class Server(object):
         """
         return self.getstatistic("NumberHITsCreated", int)
 
+
 class Response(object):
     """
     A generic response from the MTurk server.
@@ -281,13 +285,13 @@ class Response(object):
         self.tree = ElementTree.fromstring(self.data)
         self.values = {}
 
-    def validate(self, valid, errormessage = None):
+    def validate(self, valid, errormessage=None):
         """
         Validates the response and raises an exception if invalid.
-        
+
         Valid contains a path that must contain False if the response
         is invalid.
-        
+
         If errormessage is not None, use this field as the error description.
         """
         valide = self.tree.find(valid)
@@ -298,19 +302,19 @@ class Response(object):
                 errormessage = self.tree.find(errormessage)
                 if errormessage is None:
                     raise CommunicationError("Response not valid "
-                        "and XML malformed", self)
+                                             "and XML malformed", self)
                 raise CommunicationError(errormessage.text.strip(), self)
             else:
                 raise CommunicationError("Response not valid", self)
 
-    def store(self, path, name, type = str):
+    def store(self, path, name, type=str):
         """
         Stores the text at path into the attribute name.
         """
         node = self.tree.find(path)
         if node is None:
             raise CommunicationError("XML malformed "
-                "(cannot find {0})".format(path), self)
+                                     "(cannot find {0})".format(path), self)
         self.values[name] = type(node.text.strip())
 
     def __getattr__(self, name):
@@ -320,6 +324,7 @@ class Response(object):
         if name not in self.values:
             raise AttributeError("{0} is not stored".format(name))
         return self.values[name]
+
 
 class CommunicationError(Exception):
     """
@@ -331,6 +336,7 @@ class CommunicationError(Exception):
 
     def __str__(self):
         return self.error
+
 
 try:
     import config
