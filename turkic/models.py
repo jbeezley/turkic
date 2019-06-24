@@ -20,7 +20,7 @@ class HITGroup(database.Base):
     lifetime            = Column(Integer, nullable = False)
     cost                = Column(Float, nullable = False)
     keywords            = Column(String(250), nullable = False)
-    height              = Column(Integer, nullable = False, default = 650)
+    height              = Column(Integer, nullable = False, default = 0)
     donation            = Column(Integer, default = 0) # 0=off,
                                                        # 1=option,
                                                        # 2=force
